@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useMemo, useState } from "react";
 
 const options = {
@@ -426,7 +424,7 @@ function Game({ initial, onReset }) {
   );
 }
 
-export default function Home() {
+export default function App() {
   const [save, setSave] = useState(undefined);
   useEffect(() => {
     const raw = localStorage.getItem("football-life-save");
