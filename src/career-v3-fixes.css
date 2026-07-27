@@ -1,0 +1,21 @@
+.c3-wheel-disc > span {
+  transform:
+    translate(-50%, -50%)
+    rotate(calc(var(--i) * 45deg))
+    translateY(-105px)
+    rotate(calc(var(--i) * -45deg - var(--wheel-rotate)));
+}
+
+.c3-wheel-disc > strong {
+  transform: rotate(calc(-1 * var(--wheel-rotate)));
+}
+
+@media (max-width: 680px) {
+  .c3-wheel-disc > span {
+    transform:
+      translate(-50%, -50%)
+      rotate(calc(var(--i) * 45deg))
+      translateY(-90px)
+      rotate(calc(var(--i) * -45deg - var(--wheel-rotate)));
+  }
+}

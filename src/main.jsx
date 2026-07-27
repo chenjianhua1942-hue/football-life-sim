@@ -1,9 +1,9 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GameV2 from "./GameV2";
+import GameV3 from "./GameV3";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <GameV2 />
+  <GameV3 />
   </React.StrictMode>
 );
