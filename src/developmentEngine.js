@@ -7,9 +7,9 @@ const pick = arr=>arr[Math.floor(Math.random()*arr.length)];
 const allAttributes = Object.values(ATTR_GROUPS).flat();
 
 export const INTENSITIES = [
-  {id:"recovery",name:"恢复优先",xp:0.62,fatigue:2,risk:-5,desc:"成长较慢，体能与伤病管理最佳"},
-  {id:"balanced",name:"标准训练",xp:1,fatigue:-2,risk:0,desc:"训练、比赛和恢复保持平衡"},
-  {id:"intense",name:"高强度冲刺",xp:1.42,fatigue:-7,risk:6,desc:"成长更快，但疲劳与伤病风险上升"}
+  {id:"recovery",name:"恢复优先",xp:0.62,fatigue:8,risk:-5,desc:"成长较慢，体能与伤病管理最佳"},
+  {id:"balanced",name:"标准训练",xp:1,fatigue:-1,risk:0,desc:"训练、比赛和恢复保持平衡"},
+  {id:"intense",name:"高强度冲刺",xp:1.42,fatigue:-5,risk:6,desc:"成长更快，但疲劳与伤病风险上升"}
 ];
 
 export const ATTRIBUTE_SOURCES = {
@@ -187,11 +187,12 @@ export function runMonthlyDevelopment(game,context={}){
   const focus=TRAINING_FOCUSES.find(f=>f.id===game.development.focus)||TRAINING_FOCUSES[0];
   const intensity=INTENSITIES.find(i=>i.id===game.development.intensity)||INTENSITIES[1];
   const effort=game.profile.effortRate||1;
+  const namedGrowthBoost=game.profile.name==="陈健华"?3:1;
   const facility=game.career.status==="pro"?1+(game.world?.[game.career.clubId]?.momentum||0)/80:game.career.status==="academy"?.88:.55;
   const trainingBase=6*effort*intensity.xp*facility;
   allAttributes.forEach(key=>{
     const focused=focus.attrs.includes(key);
-    const amount=trainingBase*(focused?1:.12)*ageGrowthMultiplier(game.age,key);
+    const amount=trainingBase*(focused?1:.12)*ageGrowthMultiplier(game.age,key)*namedGrowthBoost;
     const r=addAttributeXp(game,key,amount,"training",`${focus.name} · ${intensity.name}`);
     report.gained+=Math.round(amount);report.improved.push(...r.improved);report.blocked.push(...r.blocked);
   });
@@ -199,13 +200,14 @@ export function runMonthlyDevelopment(game,context={}){
     const keys=matchAttributeWeights(game,context);
     const quality=clamp((context.rating||6.5)-5,0.4,4.8);
     keys.forEach((key,index)=>{
-      const amount=(5+quality*4)*(index<5?1:.45)*ageGrowthMultiplier(game.age,key);
+      const amount=(5+quality*4)*(index<5?1:.45)*ageGrowthMultiplier(game.age,key)*namedGrowthBoost;
       const r=addAttributeXp(game,key,amount,"match",`${context.competition||"比赛"} · 评分${(context.rating||0).toFixed(1)}`);
       report.gained+=Math.round(amount);report.improved.push(...r.improved);report.blocked.push(...r.blocked);
     });
   }
   game.metrics.fitness=clamp(game.metrics.fitness+intensity.fatigue);
-  game.career.injuryRisk=clamp(game.career.injuryRisk+intensity.risk,0,45);
+  const riskTarget=clamp(4+intensity.risk+Math.max(0,62-game.metrics.fitness)/7,0,28);
+  game.career.injuryRisk=clamp(Math.round(game.career.injuryRisk*.65+riskTarget*.35),0,28);
   const unique=[...new Set(report.improved)];
   report.improved=unique;
   report.blocked=[...new Set(report.blocked)].slice(0,4);
