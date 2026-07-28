@@ -227,6 +227,19 @@ export function publishMedia(game,type,payload={},options={}){
   media.articles=media.articles.slice(0,2000);
   media.unread+=articles.length;
   media.lastEvent={type,year:game.date.year,month:game.date.month};
+  const average=articles.reduce((sum,article)=>sum+article.sentiment,0)/Math.max(1,articles.length);
+  game.mediaInfluence=game.mediaInfluence||{hype:0,backlash:0,rollingSentiment:0,sponsorInterest:0};
+  game.mediaInfluence.rollingSentiment=game.mediaInfluence.rollingSentiment*.82+average*.18;
+  if(average>0){
+    game.mediaInfluence.hype=Math.min(100,game.mediaInfluence.hype+average*(options.importance||1));
+    game.mediaInfluence.sponsorInterest=Math.min(100,game.mediaInfluence.sponsorInterest+average*.7);
+  }else if(average<0){
+    game.mediaInfluence.backlash=Math.min(100,game.mediaInfluence.backlash+Math.abs(average)*(options.importance||1));
+  }
+  if((options.importance||1)>=2&&game.metrics){
+    game.metrics.reputation=Math.max(0,Math.min(100,game.metrics.reputation+Math.sign(average)*Math.min(3,Math.abs(average))));
+    game.metrics.pressure=Math.max(0,Math.min(100,game.metrics.pressure+(average<0?Math.abs(average)*2:-average*.6)));
+  }
   return articles;
 }
 

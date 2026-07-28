@@ -188,8 +188,13 @@ export function runMonthlyDevelopment(game,context={}){
   const intensity=INTENSITIES.find(i=>i.id===game.development.intensity)||INTENSITIES[1];
   const effort=game.profile.effortRate||1;
   const namedGrowthBoost=game.profile.name==="陈健华"?3:1;
+  const listedClub=CLUBS.find(c=>c.id===game.career.clubId);
+  const teammateQuality=listedClub?clamp(.78+listedClub.prestige/260,.92,1.16):1;
   const facility=game.career.status==="pro"?1+(game.world?.[game.career.clubId]?.momentum||0)/80:game.career.status==="academy"?.88:.55;
-  const trainingBase=6*effort*intensity.xp*facility;
+  const hiddenProfessionalism=game.hidden?clamp(.72+(game.hidden.selfDiscipline+game.hidden.professionalism)/360,.82,1.25):1;
+  const youthEnvironment=(game.youth?.growthMultiplier||1)*(1-(game.youth?.jumpRisk||0)/100);
+  const benchPenalty=game.youth?.benchMonths>=7?.72:game.youth?.benchMonths>=4?.87:1;
+  const trainingBase=6*effort*intensity.xp*facility*teammateQuality*hiddenProfessionalism*youthEnvironment*benchPenalty;
   allAttributes.forEach(key=>{
     const focused=focus.attrs.includes(key);
     const amount=trainingBase*(focused?1:.12)*ageGrowthMultiplier(game.age,key)*namedGrowthBoost;
@@ -235,7 +240,8 @@ export function runMonthlyDevelopment(game,context={}){
 export function applyAgeDecline(game){
   ensureDevelopmentState(game);
   if(game.age<30)return [];
-  const chance=game.age<=32?.05:game.age<=34?.12:game.age<=36?.22:.35;
+  const transitionFactor=game.career.veteranRole&&game.career.veteranRole!=="传统踢法"?.68:1;
+  const chance=(game.age<=32?.05:game.age<=34?.12:game.age<=36?.22:.35)*transitionFactor;
   if(Math.random()>chance)return [];
   const physical=["pace","stamina","strength","reactions"];
   const technical=["control","dribbling","finishing","crossing"];
