@@ -36,6 +36,36 @@ const clubById = id => CLUBS.find(c=>c.id===id);
 const seasonLabel = y => `${y}/${String(y+1).slice(-2)}`;
 const emptyStats = () => ({ apps:0, starts:0, goals:0, assists:0, cleanSheets:0, yellows:0, reds:0, rating:0, minutes:0, motm:0 });
 const hash = s => [...s].reduce((a,c)=>(a*31+c.charCodeAt(0))%100003,17);
+const EFFECT_NAMES={
+  reputation:"声望",happiness:"幸福",pressure:"压力",family:"家庭",relationship:"关系",
+  potential:"潜力",injuryRisk:"伤病风险",transferInterest:"转会关注",wealth:"财富",
+  leadership:"领导力",discipline:"纪律",confidence:"信心"
+};
+
+function effectPreview(choice){
+  const entries=[];
+  Object.entries(choice.effect||{}).forEach(([key,value])=>{
+    if(key==="attrs"){
+      const total=Object.values(value).reduce((sum,item)=>sum+item,0);
+      if(total)entries.push(`能力成长${total>0?"+":""}${total}`);
+    }else if(EFFECT_NAMES[key]&&typeof value==="number"){
+      entries.push(`${EFFECT_NAMES[key]}${value>0?"+":""}${value}`);
+    }
+  });
+  if(choice.action?.type==="academy")entries.push("改变培养路线");
+  if(choice.action?.type==="firstPro")entries.push("签下职业合同");
+  if(choice.action?.type==="rejectRenewal")entries.push("可能遭到雪藏");
+  return entries.slice(0,4);
+}
+
+function feedbackSnapshot(game){
+  return {
+    OVR:overallFor(game),关系:Math.round(game.metrics.relationship||game.relationships?.teammates||50),
+    声望:Math.round(game.metrics.reputation||0),幸福:Math.round(game.metrics.happiness||0),
+    压力:Math.round(game.metrics.pressure||0),家庭:Math.round(game.metrics.family||0),
+    财富:Math.round(game.metrics.wealth||0)
+  };
+}
 
 function overallFor(game) {
   return weightedOverall(game);
@@ -110,7 +140,7 @@ function makeInitial(selection, customName) {
     memories:[],
     seenMilestones:[],
     world:makeWorld(gender),
-    settings:{eventFrequency:"丰富",simulationDepth:6},
+    settings:{eventFrequency:"丰富",simulationDepth:6,pace:["casual","standard","hardcore"][selection.pace??0]},
     ended:false
   };
   initializeCareerSystems(game);
@@ -541,7 +571,11 @@ function simulateFeaturedMatch(game, approachId, matchContext={}) {
   const youthJumpRisk=(next.youth?.jumpRisk||0)/1400;
   const injuryChance=clamp((.008+next.career.injuryRisk/900+Math.max(0,approach.risk)/1200+(bonus.injury||0)/1000+recurrenceRisk+youthJumpRisk)*(next.metrics.fitness<40?1.65:1)*(next.age<12?.45:1)*namedRiskFactor,.001,.075);
   if(Math.random()<injuryChance){
-    const injuries=[["轻微碰撞",rnd(1,2)],["疲劳性损伤",rnd(1,3)],["肌肉拉伤",rnd(2,5)],["脚踝扭伤",rnd(3,7)],["膝部损伤",rnd(6,16)]];
+    const injuries=next.age<12
+      ?[["轻微碰撞",rnd(1,2)],["疲劳性损伤",rnd(1,2)]]
+      :next.age<16
+        ?[["轻微碰撞",rnd(1,2)],["疲劳性损伤",rnd(1,3)],["肌肉拉伤",rnd(2,4)]]
+        :[["轻微碰撞",rnd(1,2)],["疲劳性损伤",rnd(1,3)],["肌肉拉伤",rnd(2,5)],["脚踝扭伤",rnd(3,7)],["膝部损伤",rnd(6,16)]];
     const [type,weeks]=pick(injuries);next.career.injury={type,weeks};next.career.injuryHistory=next.career.injuryHistory||[];
     next.career.injuryHistory.unshift({year:next.date.year,month:next.date.month,age:next.age,type,weeks});
     applyLongTermInjury(next,next.career.injuryHistory[0]);
@@ -831,6 +865,8 @@ function migrateSave(raw){
   next.development.intensity=next.development.intensity||"balanced";
   next.calendar=next.calendar||{eventCooldown:{},handledTurn:-1,news:[]};
   next.calendar.eventCooldown=next.calendar.eventCooldown||{};
+  next.settings=next.settings||{eventFrequency:"丰富",simulationDepth:6};
+  next.settings.pace=next.settings.pace||"standard";
   next.career.injuryHistory=next.career.injuryHistory||[];
   next.honours.ceremonies=next.honours.ceremonies||[];
   next.honours.shortlists=next.honours.shortlists||[];
@@ -853,21 +889,34 @@ function legacyScore(game){
 
 function Creation({onStart}){
   const [name,setName]=useState("");
-  const [s,setS]=useState({gender:0,nationality:0,origin:0,position:7,archetype:1,effort:1});
-  const groups=[
-    ["gender","性别与赛事体系",[["男","男子俱乐部与国家队"],["女","女子俱乐部与国家队"],["随机","交给命运"]]],
-    ["nationality","国籍与国家队",NATIONALITIES],["origin","家庭出身",ORIGINS.map(x=>[x[0],x[1]])],
-    ["position","初始位置",POSITIONS.map(x=>[x.name,`${x.icon} ${x.id}`])],
-    ["archetype","球员原型",ARCHETYPES.map(x=>[x[0],x[1]])],["effort","努力方式",EFFORTS.map(x=>[x[0],x[1]])]
+  const [step,setStep]=useState(0);
+  const [s,setS]=useState({gender:0,nationality:0,origin:0,position:7,archetype:1,effort:1,pace:0});
+  const stepGroups=[
+    [
+      ["gender","性别与赛事体系",[["男","男子俱乐部与国家队"],["女","女子俱乐部与国家队"],["随机","交给命运"]]],
+      ["nationality","国籍与国家队",NATIONALITIES]
+    ],
+    [
+      ["origin","家庭出身",ORIGINS.map(x=>[x[0],x[1]])],
+      ["position","初始位置",POSITIONS.map(x=>[x.name,`${x.icon} ${x.id}`])]
+    ],
+    [
+      ["archetype","球员原型",ARCHETYPES.map(x=>[x[0],x[1]])],
+      ["effort","努力方式",EFFORTS.map(x=>[x[0],x[1]])],
+      ["pace","游戏节奏",[["轻松故事","默认推荐。一次选择，一次反馈，快速走人生"],["标准生涯","按月推进，兼顾比赛与经营"],["硬核写实","保留全部管理信息，自己掌控每个月"]]]
+    ]
   ];
+  const titles=[["第一步","你是谁"],["第二步","从哪里出发"],["第三步","想怎样走完一生"]];
   return <main className="c3-create">
-    <header><small>FOOTBALL LIFE · CAREER 5.0</small><h1>足球<span>百态</span></h1><p>从4岁开始。用真实赛历、临场决策、训练、合同与转会，走完一名球员的完整人生。</p></header>
-    <section className="c3-create-card">
-      <label className="c3-name"><span>球员姓名</span><input value={name} onChange={e=>setName(e.target.value)} placeholder="留空随机生成"/></label>
-      {groups.map(([key,title,items])=><div className="c3-choice" key={key}><h3>{title}</h3><div className={items.length>6?"scroll":""}>
+    <header><small>FOOTBALL LIFE · CAREER 5.1</small><h1>足球<span>百态</span></h1><p>复杂规则留给系统，重要选择交给你。四岁起步，一分钟就能开始一段不同的人生。</p></header>
+    <section className="c3-create-card c7-create-card">
+      <div className="c7-create-progress">{titles.map(([,label],i)=><button className={i===step?"on":i<step?"done":""} onClick={()=>setStep(i)} key={label}><i>{i<step?"✓":i+1}</i><span>{label}</span></button>)}</div>
+      <div className="c7-step-title"><small>{titles[step][0]}</small><h2>{titles[step][1]}</h2></div>
+      {step===0&&<label className="c3-name"><span>球员姓名</span><input value={name} onChange={e=>setName(e.target.value)} placeholder="留空随机生成"/></label>}
+      {stepGroups[step].map(([key,title,items])=><div className="c3-choice" key={key}><h3>{title}</h3><div className={items.length>6?"scroll":""}>
         {items.map((item,i)=><button key={`${key}-${i}`} className={s[key]===i?"on":""} onClick={()=>setS(v=>({...v,[key]:i}))}><b>{item[0]}</b><small>{item[1]}</small></button>)}
       </div></div>)}
-      <button className="c3-primary" onClick={()=>onStart(makeInitial(s,name))}>创建球员，开始4岁人生 <span>→</span></button>
+      <div className="c7-create-actions">{step>0&&<button onClick={()=>setStep(value=>value-1)}>上一步</button>}{step<2?<button className="c3-primary" onClick={()=>setStep(value=>value+1)}>继续 <span>→</span></button>:<button className="c3-primary" onClick={()=>onStart(makeInitial(s,name))}>开始4岁人生 <span>→</span></button>}</div>
       <p className="c3-note">真实俱乐部和赛事名称用于非官方模拟展示；比赛结果、能力值与生涯故事均为本游戏原创生成。</p>
     </section>
   </main>;
@@ -875,12 +924,22 @@ function Creation({onStart}){
 
 function CalendarHome({game,setGame,event,setEvent,result,setResult,matchSession,setMatchSession}){
   const ovr=overallFor(game);
+  const casual=game.settings?.pace==="casual";
   const fixtures=useMemo(()=>fixturesForMonth(game),[game.date.turn,game.career.clubId,game.career.nationalStatus]);
   const fixture=fixtures.find(f=>f.featured)||fixtures[0];
   const transferWindow=transferWindowStatus(game);
   const ownMeta=clubMeta(game.career.clubId);
   const opponentClub=CLUBS.find(c=>c.name===fixture.opponent);
+  useEffect(()=>{
+    if(!casual||event||result||matchSession||game.ended||game.calendar.handledTurn===game.date.turn)return;
+    const timer=setTimeout(()=>{
+      const nextEvent=milestoneEvent(game)||monthlyDecision(game);
+      if(nextEvent)setEvent(nextEvent);
+    },120);
+    return ()=>clearTimeout(timer);
+  },[casual,event,result,matchSession,game.ended,game.date.turn,game.calendar.handledTurn]);
   const choose=(c,i)=>{
+    const before=feedbackSnapshot(game);
     let next=applyEffects(game,c.effect);applyAction(next,c.action);
     if(event.id&&["first-team","elite-academy","youth-path","apprentice-terms","first-pro","veteran-transition","post-career"].includes(event.id))next.seenMilestones.push(event.id);
     if(event.id?.startsWith("renew-")||event.id?.startsWith("offseason-"))next.seenMilestones.push(event.id);
@@ -892,7 +951,9 @@ function CalendarHome({game,setGame,event,setEvent,result,setResult,matchSession
       publishMedia(next,"life",{key:memory.key,eventTitle:event.title,decision:c.text},{count:event.id==="first-pro"?3:2,importance:event.id==="first-pro"?3:1});
     }
     if(c.action?.type==="rejectRenewal")publishMedia(next,"transferConflict",{key:`renew-reject-${next.date.turn}`,target:next.career.clubName},{count:3,importance:2});
-    setGame(next);setEvent(null);setResult({kind:"event",...memory});
+    const after=feedbackSnapshot(next);
+    const deltas=Object.keys(before).map(label=>({label,value:after[label]-before[label],after:after[label]})).filter(item=>item.value!==0);
+    setGame(next);setEvent(null);setResult({kind:"event",...memory,deltas});
   };
   const startMatch=approach=>{
     const moments=scenariosFor(game.profile.position,game.career.status==="pro"?4:3,game.age).map(materializeScenario);
@@ -922,14 +983,24 @@ function CalendarHome({game,setGame,event,setEvent,result,setResult,matchSession
     const after={apps:current.totals.apps,goals:current.totals.goals,assists:current.totals.assists,ovr:overallFor(current)};
     setGame(current);setEvent(pendingMilestone);setResult({kind:"match",keepEvent:Boolean(pendingMilestone),title:pendingMilestone?"快速推进在关键节点暂停":months>1?`${months}个月快速推进完成`:"本月自动模拟完成",summary:`出场 +${after.apps-before.apps} · 进球 +${after.goals-before.goals} · 助攻 +${after.assists-before.assists} · OVR ${before.ovr} → ${after.ovr}${current.career.injury?` · 当前伤病：${current.career.injury.type}`:""}${pendingMilestone?` · 下一步：${pendingMilestone.title}`:""}`});
   };
+  const continueResult=()=>{
+    if(casual&&result.kind==="event"){
+      setEvent(null);
+      quickAdvance(game.age<14?12:6);
+      return;
+    }
+    if(!result.keepEvent)setEvent(null);
+    setResult(null);
+  };
   if(game.ended)return <section className="c3-panel c3-ending"><small>人生终章</small><h2>{game.profile.name}的足球人生</h2><b>{legacyScore(game)}</b><span>生涯遗产评分</span><p>{game.totals.apps}场、{game.totals.goals}球、{game.honours.trophies.length}座冠军与{game.totals.caps}次国家队出场，共同组成了这段不可复制的人生。</p></section>;
   if(result)return <section className={`c3-result ${result.kind}`}>
     <small>{result.kind==="match"?"比赛日终场":"选择已经进入历史"}</small><h2>{result.title||result.choice}</h2>
     {result.score&&<b className="c3-score">{result.score}</b>}<p>{result.summary||result.result}</p>
+    {result.deltas?.length>0&&<div className="c7-result-deltas">{result.deltas.map(item=><span className={item.value>0?"up":"down"} key={item.label}><b>{item.label}{item.value>0?"+":""}{item.value}</b><small>现在 {item.after}</small></span>)}</div>}
     {result.moments?.length>0&&<div className="c5-result-moments">{result.moments.map((m,i)=><article key={i}><b>{m.minute}' · {m.title}</b><span>{m.choice}</span><small>{m.feedback}</small></article>)}</div>}
-    {result.tag&&<span>{result.tag}</span>}<button className="c3-primary" onClick={()=>{if(!result.keepEvent)setEvent(null);setResult(null)}}>{result.kind==="event"?"返回本月日程":result.keepEvent?"处理关键节点":"进入下个月"} →</button>
+    {result.tag&&<span>{result.tag}</span>}<button className="c3-primary" onClick={continueResult}>{casual&&result.kind==="event"?`推进人生（${game.age<14?12:6}个月）`:result.kind==="event"?"返回本月日程":result.keepEvent?"处理关键节点":"继续生涯"} →</button>
   </section>;
-  if(event)return <article className="c3-event"><header><span>{event.icon} 本月球队事务</span><em>{game.date.year} · {MONTHS[game.date.month]}</em></header><h2>{event.title}</h2><p>{event.text}</p><div>{event.choices.map((c,i)=><button onClick={()=>choose(c,i)} key={`${event.id}-${i}`}><span>{String.fromCharCode(65+i)}</span><section><b>{c.text}</b><small>{c.tag}</small></section><em>→</em></button>)}</div><button className="c5-text-button" onClick={()=>setEvent(null)}>稍后处理</button></article>;
+  if(event)return <article className={`c3-event ${casual?"c7-story-event":""}`}><header><span>{event.icon} {casual?"生涯抉择":"本月球队事务"}</span><em>{game.age}岁 · {game.date.year}</em></header><h2>{event.title}</h2><p>{event.text}</p><div>{event.choices.map((c,i)=>{const previews=effectPreview(c);return <button onClick={()=>choose(c,i)} key={`${event.id}-${i}`}><span>{String.fromCharCode(65+i)}</span><section><b>{c.text}</b><small>{previews.length?previews.join(" · "):c.tag}</small></section><em>→</em></button>})}</div>{!casual&&<button className="c5-text-button" onClick={()=>setEvent(null)}>稍后处理</button>}</article>;
   if(matchSession?.stage==="plan")return <section className="c3-matchday">
     <header><small>{fixture.type} · {fixture.name}</small><span>{fixture.home?"主场":"客场"}</span></header>
     <div className="c3-versus"><section>{ownMeta.crest?<img src={ownMeta.crest} alt=""/>:<i>{fixture.ownTeam[0]}</i>}<b>{fixture.ownTeam}</b></section><em>VS</em><section>{opponentClub&&clubMeta(opponentClub.id).crest?<img src={clubMeta(opponentClub.id).crest} alt=""/>:<i>{fixture.opponent[0]}</i>}<b>{fixture.opponent}</b></section></div>
@@ -949,6 +1020,25 @@ function CalendarHome({game,setGame,event,setEvent,result,setResult,matchSession
       {matchSession.log.length>0&&<div className="c5-live-log">{matchSession.log.map((m,i)=><article key={i}><b>{m.minute}'</b><span>{m.feedback}</span></article>)}</div>}
     </section>;
   }
+  if(casual)return <section className="c7-story-home">
+    <div className="c7-player-card">
+      <div className="c7-ovr"><small>OVR</small><b>{ovr}</b></div>
+      <section><small>{game.profile.nationality} · #{game.career.squadNumber||"—"} {game.profile.position}</small><h2>{game.profile.name}</h2><p>{game.career.clubName} · {game.career.role}</p></section>
+      <aside><span>年龄 <b>{game.age}</b></span><span>身价 <b>{game.career.value?money(game.career.value):"未定价"}</b></span></aside>
+    </div>
+    <div className="c7-four-lines">
+      <article><span>教练信任</span><b>{Math.round(game.career.managerTrust)}</b></article>
+      <article><span>关系</span><b>{Math.round(game.metrics.relationship||50)}</b></article>
+      <article><span>名气</span><b>{Math.round(game.metrics.reputation)}</b></article>
+      <article><span>财富</span><b>{game.life.cash?money(game.life.cash):game.metrics.wealth}</b></article>
+    </div>
+    <div className="c7-next-story">
+      <small>正在生成下一段人生</small><h2>{game.age<7?"足球启蒙":game.age<14?"少年成长":game.age<18?"青训竞争":"职业足坛"}</h2>
+      <p>每次只处理一个真正有代价的选择。比赛、成长、媒体和世界生态仍在后台完整运行。</p>
+      <button onClick={()=>setEvent(milestoneEvent(game)||monthlyDecision(game))}>进入本阶段抉择 <span>→</span></button>
+    </div>
+    <button className="c7-featured-match" onClick={()=>setMatchSession({stage:"plan"})}><span>本月焦点</span><b>{fixture.focus.label}</b><small>{fixture.ownTeam} vs {fixture.opponent}</small></button>
+  </section>;
   return <section className="c3-home c5-calendar">
     <div className="c3-current"><section><small>{game.career.league}</small><b>{game.career.clubName}</b><span>{game.career.role}{game.career.value?` · 身价 ${money(game.career.value)}`:""}</span></section><div><small>能力 / 动态潜力</small><b>{ovr}<i>/</i>{game.potential.current}</b><span>上限 {game.potential.ceiling}/100 · {game.potential.trend>0?"↑":game.potential.trend<0?"↓":"→"}</span></div></div>
     <div className="c5-month-head"><section><small>本月赛程</small><h2>{game.date.year}年{MONTHS[game.date.month]}</h2><p>{fixtures.length} 场比赛 · 1 场完整模拟 · 其余比赛根据角色与状态结算</p></section>{game.career.status==="pro"?<aside className={transferWindow.open?"open":""}><b>{transferWindow.label}</b><span>{transferWindow.next}</span></aside>:<aside className="open"><b>{game.age<7?"启蒙足球":"青少年赛历"}</b><span>比赛时长、换人和对抗强度按年龄阶段调整</span></aside>}</div>
@@ -1222,8 +1312,10 @@ function Game({initial,onReset}){
   const ovr=overallFor(game);
   const stage=game.career.status==="pro"?"职业生涯":game.career.status==="academy"?"青训生涯":game.career.status==="freeagent"?"自由球员":game.career.status==="retired"?"退役生活":game.age<7?"足球启蒙":"少年成长";
   const nav=[["人生","▤"],["球员","●"],["球队","♟"],["赛事","▦"],["媒体","◉"],["合同","✍"],["荣誉","★"],["回忆","◷"]];
-  return <main className="c3-shell">
-    <header className="c3-top"><b>足球<span>百态</span><em>5.0</em></b><div><i/>浏览器自动存档</div></header>
+  const casual=game.settings?.pace==="casual";
+  const togglePace=()=>setGame(current=>({...current,settings:{...current.settings,pace:current.settings?.pace==="casual"?"standard":"casual"}}));
+  return <main className={`c3-shell ${casual?"c7-casual-shell":""}`}>
+    <header className="c3-top"><b>足球<span>百态</span><em>5.1</em></b><div><i/>浏览器自动存档 <button onClick={togglePace}>{casual?"打开深度模式":"切换轻松模式"}</button></div></header>
     <section className="c3-identity"><div className="c3-avatar">{position(game.profile.position).icon}</div><section><p><b>{game.age}</b>岁 · {game.date.year}年{MONTHS[game.date.month]}</p><h1>{game.profile.name}</h1><span>{game.profile.nationality} · {game.profile.archetype}</span>{game.profile.name==="陈健华"&&<em className="c5-special-player">传奇成长：3×成长 · ⅓伤病风险 · 潜力100</em>}</section><aside><small>人生阶段</small><b>{stage}</b></aside></section>
     <section className="c3-metrics">{[["OVR",ovr],["状态",game.metrics.form],["体能",game.metrics.fitness],["声望",game.metrics.reputation],["幸福",game.metrics.happiness],["压力",game.metrics.pressure]].map(([k,v])=><div key={k}><span>{k}</span><b>{Math.round(v)}</b><i><em style={{width:`${clamp(v)}%`}}/></i></div>)}</section>
     {game.career.injury&&<div className="c3-injury">医疗报告：{game.career.injury.type} · 预计还需 {game.career.injury.weeks} 周</div>}
@@ -1243,6 +1335,6 @@ function Game({initial,onReset}){
 export default function GameV3(){
   const [save,setSave]=useState(undefined);
   useEffect(()=>{const raw=localStorage.getItem("football-life-v3");try{setSave(raw?migrateSave(JSON.parse(raw)):null)}catch{setSave(null)}},[]);
-  if(save===undefined)return <div className="c3-loading">足球百态 5.0</div>;
+  if(save===undefined)return <div className="c3-loading">足球百态 5.1</div>;
   return save?<Game initial={save} onReset={current=>{if(current?.career?.status==="retired"){try{localStorage.setItem("football-life-legends",JSON.stringify(current.worldSim?.legends||[]))}catch{}}localStorage.removeItem("football-life-v3");setSave(null);window.scrollTo(0,0)}}/>:<Creation onStart={setSave}/>;
 }
